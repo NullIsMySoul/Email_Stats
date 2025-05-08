@@ -49,6 +49,18 @@ st.markdown("""
         font-size: 1rem;
         color: #6c757d;
     }
+    .engagement-stats {
+        font-size: 1.1rem;
+        color: #343a40;
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+    }
+    .stats-highlight {
+        font-weight: bold;
+        color: #4a6fff;
+    }
     .stDownloadButton button {
         background-color: #4a6fff;
         color: white;
@@ -140,30 +152,6 @@ def calculate_metrics(df):
     
     return result_df
 
-def generate_fake_dates(df, start_date=None, end_date=None):
-    """Add synthetic dates to the dataframe for time series visualization"""
-    if start_date is None:
-        start_date = datetime.now() - timedelta(days=90)
-    if end_date is None:
-        end_date = datetime.now()
-    
-    # Create a copy of the dataframe
-    time_df = df.copy()
-    
-    # Generate random dates within the range
-    date_range = (end_date - start_date).days
-    if date_range <= 0:
-        date_range = 90  # Default to 90 days if dates are invalid
-    
-    # Fix: Convert numpy.int32 to Python int
-    random_days = np.random.randint(0, date_range, size=len(df))
-    time_df['Date'] = [start_date + timedelta(days=int(days)) for days in random_days]
-    
-    # Sort by date
-    time_df = time_df.sort_values('Date')
-    
-    return time_df
-
 def generate_industry_benchmarks():
     """Generate fake industry benchmarks for comparison"""
     return {
@@ -212,16 +200,6 @@ with st.sidebar:
     
     # Dark Mode Toggle
     theme_mode = st.toggle("Dark Mode", False)
-    
-    # Date Range for Time Series
-    st.subheader("Time Series Settings")
-    
-    # Set default dates
-    default_end_date = datetime.now()
-    default_start_date = default_end_date - timedelta(days=90)
-    
-    start_date = st.date_input("Start Date", value=default_start_date)
-    end_date = st.date_input("End Date", value=default_end_date)
     
     # Add separator
     st.markdown("<hr>", unsafe_allow_html=True)
@@ -287,9 +265,6 @@ if df is not None:
         # Convert binary data and calculate metrics
         metrics_df = calculate_metrics(df)
         
-        # Generate synthetic dates for time series
-        time_series_df = generate_fake_dates(metrics_df, start_date, end_date)
-        
         # Create filters
         st.markdown('<div class="sub-header">Filters</div>', unsafe_allow_html=True)
         
@@ -312,13 +287,6 @@ if df is not None:
             filtered_df = filtered_df[filtered_df['Company'] == selected_company]
         if selected_role != 'All Roles':
             filtered_df = filtered_df[filtered_df['JobRole'] == selected_role]
-        
-        # Also apply filters to time series data
-        filtered_time_df = time_series_df.copy()
-        if selected_company != 'All Companies':
-            filtered_time_df = filtered_time_df[filtered_time_df['Company'] == selected_company]
-        if selected_role != 'All Roles':
-            filtered_time_df = filtered_time_df[filtered_time_df['JobRole'] == selected_role]
         
         # Calculate summary metrics for filtered data
         total_sent = filtered_df['EmailsSent'].sum()
@@ -347,7 +315,7 @@ if df is not None:
             st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-value">{open_rate:.1f}%</div>
-                <div class="metric-label">Open Rate</div>
+                <div class="metric-label">Open Rate ({total_opened}/{total_sent})</div>
                 <div class="tooltip">ℹ️
                     <span class="tooltiptext">Percentage of emails that were opened</span>
                 </div>
@@ -358,7 +326,7 @@ if df is not None:
             st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-value">{click_rate:.1f}%</div>
-                <div class="metric-label">Click Rate</div>
+                <div class="metric-label">Click Rate ({total_clicked}/{total_sent})</div>
                 <div class="tooltip">ℹ️
                     <span class="tooltiptext">Percentage of emails that were clicked</span>
                 </div>
@@ -379,536 +347,685 @@ if df is not None:
         # Main charts section
         st.markdown('<div class="sub-header">Performance Analysis</div>', unsafe_allow_html=True)
         
-        tab1, tab2, tab3, tab4 = st.tabs(["Bar Charts", "Line Charts", "Heat Maps", "Data Table"])
+        tab1, tab2 = st.tabs(["Bar Charts", "Data Table"])
         
         with tab1:
+            # Company-level detailed engagement metrics
+            if selected_company == 'All Companies':
+                # Calculate company-level metrics
+                company_engagement = filtered_df.groupby('Company').agg({
+                    'EmailsSent': 'sum',
+                    'EmailsOpened': 'sum',
+                    'EmailsClicked': 'sum',
+                    'PersonName': 'count'
+                }).reset_index()
+                
+                # Rename PersonName column to TotalPeople
+                company_engagement.rename(columns={'PersonName': 'TotalPeople'}, inplace=True)
+                
+                # Calculate rates
+                company_engagement['OpenRate'] = np.where(company_engagement['EmailsSent'] > 0, 
+                                                      company_engagement['EmailsOpened'] / company_engagement['EmailsSent'] * 100, 
+                                                      0)
+                company_engagement['ClickRate'] = np.where(company_engagement['EmailsSent'] > 0, 
+                                                       company_engagement['EmailsClicked'] / company_engagement['EmailsSent'] * 100, 
+                                                       0)
+                
+                # Company metrics visualization
+                st.subheader("Company Engagement Details")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Bar chart for open rates
+                    if metric_type in ["Open Rate", "All Metrics"]:
+                        fig_open = go.Figure(go.Bar(
+                            x=company_engagement['Company'],
+                            y=company_engagement['OpenRate'],
+                            text=[f"{rate:.1f}% ({opened}/{total} people)" for rate, opened, total in 
+                                  zip(company_engagement['OpenRate'], company_engagement['EmailsOpened'], company_engagement['TotalPeople'])],
+                            textposition='outside',
+                            marker_color='rgba(74, 111, 255, 0.7)'
+                        ))
+                        
+                        fig_open.update_layout(
+                            title='Open Rate by Company',
+                            xaxis_title='Company',
+                            yaxis_title='Open Rate (%)',
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_open, use_container_width=True)
+                
+                with col2:
+                    # Bar chart for click rates
+                    if metric_type in ["Click Rate", "All Metrics"]:
+                        fig_click = go.Figure(go.Bar(
+                            x=company_engagement['Company'],
+                            y=company_engagement['ClickRate'],
+                            text=[f"{rate:.1f}% ({clicked}/{total} people)" for rate, clicked, total in 
+                                  zip(company_engagement['ClickRate'], company_engagement['EmailsClicked'], company_engagement['TotalPeople'])],
+                            textposition='outside',
+                            marker_color='rgba(255, 99, 132, 0.7)'
+                        ))
+                        
+                        fig_click.update_layout(
+                            title='Click Rate by Company',
+                            xaxis_title='Company',
+                            yaxis_title='Click Rate (%)',
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_click, use_container_width=True)
+                
+                # Display company engagement details table
+                with st.expander("View Company Engagement Details", expanded=True):
+                    # Format the table for display
+                    display_company_engagement = company_engagement.copy()
+                    display_company_engagement['Open Rate'] = display_company_engagement['OpenRate'].round(1).astype(str) + '%'
+                    display_company_engagement['Click Rate'] = display_company_engagement['ClickRate'].round(1).astype(str) + '%'
+                    display_company_engagement['Open Details'] = [f"{opened}/{total} people" for opened, total in 
+                                                                zip(display_company_engagement['EmailsOpened'], display_company_engagement['TotalPeople'])]
+                    display_company_engagement['Click Details'] = [f"{clicked}/{total} people" for clicked, total in 
+                                                                 zip(display_company_engagement['EmailsClicked'], display_company_engagement['TotalPeople'])]
+                    
+                    # Select and rename columns for display
+                    display_cols = ['Company', 'TotalPeople', 'Open Rate', 'Open Details', 'Click Rate', 'Click Details']
+                    display_names = ['Company', 'Total People', 'Open Rate', 'Opens', 'Click Rate', 'Clicks']
+                    display_company_table = display_company_engagement[display_cols].copy()
+                    display_company_table.columns = display_names
+                    
+                    st.dataframe(display_company_table, use_container_width=True)
+            
+            # Job Role-level detailed engagement metrics
+            if selected_role == 'All Roles':
+                # Calculate role-level metrics
+                role_engagement = filtered_df.groupby('JobRole').agg({
+                    'EmailsSent': 'sum',
+                    'EmailsOpened': 'sum',
+                    'EmailsClicked': 'sum',
+                    'PersonName': 'count'
+                }).reset_index()
+                
+                # Rename PersonName column to TotalPeople
+                role_engagement.rename(columns={'PersonName': 'TotalPeople'}, inplace=True)
+                
+                # Calculate rates
+                role_engagement['OpenRate'] = np.where(role_engagement['EmailsSent'] > 0, 
+                                                   role_engagement['EmailsOpened'] / role_engagement['EmailsSent'] * 100, 
+                                                   0)
+                role_engagement['ClickRate'] = np.where(role_engagement['EmailsSent'] > 0, 
+                                                    role_engagement['EmailsClicked'] / role_engagement['EmailsSent'] * 100, 
+                                                    0)
+                
+                # Job Role metrics visualization
+                st.subheader("Job Role Engagement Details")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Bar chart for open rates by role
+                    if metric_type in ["Open Rate", "All Metrics"]:
+                        fig_role_open = go.Figure(go.Bar(
+                            x=role_engagement['JobRole'],
+                            y=role_engagement['OpenRate'],
+                            text=[f"{rate:.1f}% ({opened}/{total} people)" for rate, opened, total in 
+                                  zip(role_engagement['OpenRate'], role_engagement['EmailsOpened'], role_engagement['TotalPeople'])],
+                            textposition='outside',
+                            marker_color='rgba(74, 111, 255, 0.7)'
+                        ))
+                        
+                        fig_role_open.update_layout(
+                            title='Open Rate by Job Role',
+                            xaxis_title='Job Role',
+                            yaxis_title='Open Rate (%)',
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_role_open, use_container_width=True)
+                
+                with col2:
+                    # Bar chart for click rates by role
+                    if metric_type in ["Click Rate", "All Metrics"]:
+                        fig_role_click = go.Figure(go.Bar(
+                            x=role_engagement['JobRole'],
+                            y=role_engagement['ClickRate'],
+                            text=[f"{rate:.1f}% ({clicked}/{total} people)" for rate, clicked, total in 
+                                  zip(role_engagement['ClickRate'], role_engagement['EmailsClicked'], role_engagement['TotalPeople'])],
+                            textposition='outside',
+                            marker_color='rgba(255, 99, 132, 0.7)'
+                        ))
+                        
+                        fig_role_click.update_layout(
+                            title='Click Rate by Job Role',
+                            xaxis_title='Job Role',
+                            yaxis_title='Click Rate (%)',
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_role_click, use_container_width=True)
+                
+                # Display role engagement details table
+                with st.expander("View Job Role Engagement Details", expanded=True):
+                    # Format the table for display
+                    display_role_engagement = role_engagement.copy()
+                    display_role_engagement['Open Rate'] = display_role_engagement['OpenRate'].round(1).astype(str) + '%'
+                    display_role_engagement['Click Rate'] = display_role_engagement['ClickRate'].round(1).astype(str) + '%'
+                    display_role_engagement['Open Details'] = [f"{opened}/{total} people" for opened, total in 
+                                                            zip(display_role_engagement['EmailsOpened'], display_role_engagement['TotalPeople'])]
+                    display_role_engagement['Click Details'] = [f"{clicked}/{total} people" for clicked, total in 
+                                                             zip(display_role_engagement['EmailsClicked'], display_role_engagement['TotalPeople'])]
+                    
+                    # Select and rename columns for display
+                    display_cols = ['JobRole', 'TotalPeople', 'Open Rate', 'Open Details', 'Click Rate', 'Click Details']
+                    display_names = ['Job Role', 'Total People', 'Open Rate', 'Opens', 'Click Rate', 'Clicks']
+                    display_role_table = display_role_engagement[display_cols].copy()
+                    display_role_table.columns = display_names
+                    
+                    st.dataframe(display_role_table, use_container_width=True)
+            
+            # If specific company is selected, show job roles within that company
+            if selected_company != 'All Companies':
+                st.subheader(f"Job Role Breakdown for {selected_company}")
+                
+                # Filter data for selected company
+                company_data = filtered_df[filtered_df['Company'] == selected_company]
+                
+                # Group by job role
+                company_roles = company_data.groupby('JobRole').agg({
+                    'EmailsSent': 'sum',
+                    'EmailsOpened': 'sum',
+                    'EmailsClicked': 'sum',
+                    'PersonName': 'count'
+                }).reset_index()
+                
+                # Rename PersonName column to TotalPeople
+                company_roles.rename(columns={'PersonName': 'TotalPeople'}, inplace=True)
+                
+                # Calculate rates
+                company_roles['OpenRate'] = np.where(company_roles['EmailsSent'] > 0, 
+                                                  company_roles['EmailsOpened'] / company_roles['EmailsSent'] * 100, 
+                                                  0)
+                company_roles['ClickRate'] = np.where(company_roles['EmailsSent'] > 0, 
+                                                   company_roles['EmailsClicked'] / company_roles['EmailsSent'] * 100, 
+                                                   0)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Bar chart for open rates by role within company
+                    if metric_type in ["Open Rate", "All Metrics"]:
+                        fig_comp_role_open = go.Figure(go.Bar(
+                            x=company_roles['JobRole'],
+                            y=company_roles['OpenRate'],
+                            text=[f"{rate:.1f}% ({opened}/{total} people)" for rate, opened, total in 
+                                  zip(company_roles['OpenRate'], company_roles['EmailsOpened'], company_roles['TotalPeople'])],
+                            textposition='outside',
+                            marker_color='rgba(74, 111, 255, 0.7)'
+                        ))
+                        
+                        fig_comp_role_open.update_layout(
+                            title=f'Open Rate by Job Role at {selected_company}',
+                            xaxis_title='Job Role',
+                            yaxis_title='Open Rate (%)',
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_comp_role_open, use_container_width=True)
+                
+                with col2:
+                    # Bar chart for click rates by role within company
+                    if metric_type in ["Click Rate", "All Metrics"]:
+                        fig_comp_role_click = go.Figure(go.Bar(
+                            x=company_roles['JobRole'],
+                            y=company_roles['ClickRate'],
+                            text=[f"{rate:.1f}% ({clicked}/{total} people)" for rate, clicked, total in 
+                                  zip(company_roles['ClickRate'], company_roles['EmailsClicked'], company_roles['TotalPeople'])],
+                            textposition='outside',
+                            marker_color='rgba(255, 99, 132, 0.7)'
+                        ))
+                        
+                        fig_comp_role_click.update_layout(
+                            title=f'Click Rate by Job Role at {selected_company}',
+                            xaxis_title='Job Role',
+                            yaxis_title='Click Rate (%)',
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig_comp_role_click, use_container_width=True)
+                
+                # Display who engaged from this company
+                st.subheader(f"Individuals who engaged at {selected_company}")
+                
+                # Get people who opened emails
+                openers = company_data[company_data['EmailsOpened'] == 1][['PersonName', 'JobRole']]
+                openers['Action'] = 'Opened'
+                
+                # Get people who clicked emails
+                clickers = company_data[company_data['EmailsClicked'] == 1][['PersonName', 'JobRole']]
+                clickers['Action'] = 'Clicked'
+                
+                # Combine and display in a table
+                if not openers.empty or not clickers.empty:
+                    engaged_people = pd.concat([openers, clickers]).drop_duplicates()
+                    engaged_people.columns = ['Name', 'Job Role', 'Action']
+                    
+                    st.dataframe(engaged_people, use_container_width=True)
+                else:
+                    st.info(f"No one from {selected_company} has engaged with your emails yet.")
+        
+        with tab2:
+            st.subheader("Email Engagement Details")
+            
+            # Display company and job role details about who opened/clicked
+            company_job_engagement = filtered_df.groupby(['Company', 'JobRole']).agg({
+                'EmailsSent': 'sum',
+                'EmailsOpened': 'sum',
+                'EmailsClicked': 'sum',
+                'PersonName': lambda x: ', '.join(filtered_df.loc[filtered_df.loc[x.index]['EmailsOpened'] == 1, 'PersonName'])
+            }).reset_index()
+            
+            # Rename columns
+            company_job_engagement.rename(columns={
+                'PersonName': 'People Who Opened'
+            }, inplace=True)
+            
+            # Add people who clicked
+            company_job_engagement['People Who Clicked'] = filtered_df.groupby(['Company', 'JobRole']).apply(
+                lambda x: ', '.join(x.loc[x['EmailsClicked'] == 1, 'PersonName'])
+            ).reset_index(drop=True)
+            
+            # Count total people per company/role combination
+            people_count = filtered_df.groupby(['Company', 'JobRole']).size().reset_index(name='Total People')
+            company_job_engagement = company_job_engagement.merge(people_count, on=['Company', 'JobRole'])
+            
+            # Calculate rates
+            company_job_engagement['Open Rate'] = np.where(company_job_engagement['EmailsSent'] > 0,
+                                                        (company_job_engagement['EmailsOpened'] / company_job_engagement['EmailsSent'] * 100).round(1).astype(str) + '%',
+                                                        '0.0%')
+            
+            company_job_engagement['Click Rate'] = np.where(company_job_engagement['EmailsSent'] > 0,
+                                                         (company_job_engagement['EmailsClicked'] / company_job_engagement['EmailsSent'] * 100).round(1).astype(str) + '%',
+                                                         '0.0%')
+            
+            # Add engagement details
+            company_job_engagement['Open Details'] = company_job_engagement['EmailsOpened'].astype(str) + '/' + company_job_engagement['Total People'].astype(str)
+            company_job_engagement['Click Details'] = company_job_engagement['EmailsClicked'].astype(str) + '/' + company_job_engagement['Total People'].astype(str)
+            
+            # Select and rename columns for display
+            display_cols = ['Company', 'JobRole', 'Total People', 'Open Rate', 'Open Details', 'People Who Opened', 
+                           'Click Rate', 'Click Details', 'People Who Clicked']
+            display_names = ['Company', 'Job Role', 'Total People', 'Open Rate', 'Opens', 'People Who Opened', 
+                            'Click Rate', 'Clicks', 'People Who Clicked']
+            
+            detailed_table = company_job_engagement[display_cols].copy()
+            detailed_table.columns = display_names
+            
+            # Display the table
+            st.dataframe(detailed_table, use_container_width=True)
+
+            # Add export functionality
+            csv = detailed_table.to_csv(index=False)
+
+            b64 = base64.b64encode(csv.encode()).decode()
+            href = f'<a href="data:file/csv;base64,{b64}" download="email_engagement_report.csv">Download CSV Report</a>'
+            st.markdown(href, unsafe_allow_html=True)
+        
+        # Insights and recommendations section
+        st.markdown('<div class="sub-header">Insights & Recommendations</div>', unsafe_allow_html=True)
+        
+        with st.expander("View Insights", expanded=True):
+            if not filtered_df.empty:
+                # Calculate engagement metrics for insights
+                total_recipients = len(filtered_df)
+                engaged_recipients = len(filtered_df[filtered_df['EmailsOpened'] == 1])
+                click_recipients = len(filtered_df[filtered_df['EmailsClicked'] == 1])
+                
+                # Industry benchmarks for comparison
+                industry_benchmarks = generate_industry_benchmarks()
+                
+                # Generate insights based on the data
+                st.markdown(f"""
+                <div class="engagement-stats">
+                    <h3>Overall Engagement</h3>
+                    <ul>
+                        <li>Your email campaign reached <span class="stats-highlight">{total_recipients}</span> recipients.</li>
+                        <li>Your open rate is <span class="stats-highlight">{open_rate:.1f}%</span>, which is 
+                            {'<span class="stats-highlight">above</span>' if open_rate > industry_benchmarks['OpenRate']['Overall'] else '<span class="stats-highlight">below</span>'} 
+                            the industry average of {industry_benchmarks['OpenRate']['Overall']}%.</li>
+                        <li>Your click rate is <span class="stats-highlight">{click_rate:.1f}%</span>, which is 
+                            {'<span class="stats-highlight">above</span>' if click_rate > industry_benchmarks['ClickRate']['Overall'] else '<span class="stats-highlight">below</span>'} 
+                            the industry average of {industry_benchmarks['ClickRate']['Overall']}%.</li>
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Generate recommendations based on metrics
+                st.markdown("""
+                <div class="engagement-stats">
+                    <h3>Recommendations</h3>
+                    <ul>
+                """, unsafe_allow_html=True)
+                
+                # Open rate recommendations
+                if open_rate < industry_benchmarks['OpenRate']['Overall']:
+                    st.markdown("""
+                    <li>To improve your <b>open rate</b>:
+                        <ul>
+                            <li>Experiment with more compelling subject lines</li>
+                            <li>Test different sending times</li>
+                            <li>Segment your audience for more targeted emails</li>
+                            <li>Clean your email list to remove inactive subscribers</li>
+                        </ul>
+                    </li>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                    <li>Your <b>open rate</b> is performing well. Keep:
+                        <ul>
+                            <li>Using effective subject lines</li>
+                            <li>Maintaining your sender reputation</li>
+                            <li>Sending at optimal times</li>
+                        </ul>
+                    </li>
+                    """, unsafe_allow_html=True)
+                
+                # Click rate recommendations
+                if click_rate < industry_benchmarks['ClickRate']['Overall']:
+                    st.markdown("""
+                    <li>To improve your <b>click rate</b>:
+                        <ul>
+                            <li>Make your call-to-action buttons more prominent</li>
+                            <li>Ensure your content is relevant to the audience</li>
+                            <li>Test different content formats (images, videos, etc.)</li>
+                            <li>Use personalization to increase relevance</li>
+                        </ul>
+                    </li>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                    <li>Your <b>click rate</b> is performing well. Continue:
+                        <ul>
+                            <li>Using clear and compelling calls-to-action</li>
+                            <li>Creating valuable and relevant content</li>
+                            <li>Keeping your emails concise and focused</li>
+                        </ul>
+                    </li>
+                    """, unsafe_allow_html=True)
+                
+                # Targeting recommendations
+                if selected_company == 'All Companies' and selected_role == 'All Roles':
+                    # Find top performing segments
+                    if 'company_engagement' in locals():
+                        top_company = company_engagement.sort_values('ClickRate', ascending=False).iloc[0]
+                        top_company_name = top_company['Company']
+                        top_company_click_rate = top_company['ClickRate']
+                        
+                        st.markdown(f"""
+                        <li>Consider focusing more on <b>{top_company_name}</b>:
+                            <ul>
+                                <li>This company shows the highest engagement with a click rate of {top_company_click_rate:.1f}%</li>
+                                <li>Consider creating more targeted content for this audience</li>
+                            </ul>
+                        </li>
+                        """, unsafe_allow_html=True)
+                    
+                    if 'role_engagement' in locals():
+                        top_role = role_engagement.sort_values('ClickRate', ascending=False).iloc[0]
+                        top_role_name = top_role['JobRole']
+                        top_role_click_rate = top_role['ClickRate']
+                        
+                        st.markdown(f"""
+                        <li>The <b>{top_role_name}</b> role responds best to your emails:
+                            <ul>
+                                <li>This role shows a click rate of {top_role_click_rate:.1f}%</li>
+                                <li>Consider tailoring future content to address their specific needs</li>
+                            </ul>
+                        </li>
+                        """, unsafe_allow_html=True)
+                
+                st.markdown("""
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.info("No data available to generate insights. Please upload data or use the sample data.")
+        
+        # Advanced analytics section
+        st.markdown('<div class="sub-header">Advanced Analytics</div>', unsafe_allow_html=True)
+        
+        # Engagement correlation analysis
+        advanced_tab1, advanced_tab2 = st.tabs(["Engagement Correlation", "Time Series Simulation"])
+        
+        with advanced_tab1:
+            st.subheader("Correlation between Job Roles and Engagement")
+            
+            if not filtered_df.empty:
+                # Create a pivot table for job roles vs engagement
+                role_pivot = pd.pivot_table(
+                    filtered_df,
+                    values=['EmailsOpened', 'EmailsClicked'],
+                    index='JobRole',
+                    aggfunc=np.sum
+                ).reset_index()
+                
+                # Add total emails for each role
+                role_counts = filtered_df.groupby('JobRole').size().reset_index(name='TotalEmails')
+                role_pivot = role_pivot.merge(role_counts, on='JobRole')
+                
+                # Calculate rates
+                role_pivot['OpenRate'] = (role_pivot['EmailsOpened'] / role_pivot['TotalEmails'] * 100).round(1)
+                role_pivot['ClickRate'] = (role_pivot['EmailsClicked'] / role_pivot['TotalEmails'] * 100).round(1)
+                
+                # Create correlation heatmap
+                fig = px.scatter(
+                    role_pivot,
+                    x='OpenRate',
+                    y='ClickRate',
+                    size='TotalEmails',
+                    color='JobRole',
+                    hover_name='JobRole',
+                    text='JobRole',
+                    title='Job Role Engagement Analysis'
+                )
+                
+                fig.update_layout(
+                    xaxis_title='Open Rate (%)',
+                    yaxis_title='Click Rate (%)',
+                    height=500
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                st.markdown("""
+                <div class="engagement-stats">
+                    <h3>Interpretation</h3>
+                    <p>This bubble chart shows the relationship between open rates and click rates across different job roles:</p>
+                    <ul>
+                        <li>Bubble size represents the number of emails sent to that role</li>
+                        <li>Roles in the upper right corner have high open and click rates (most engaged)</li>
+                        <li>Roles in the lower left corner have low open and click rates (least engaged)</li>
+                        <li>Roles with high open but low click rates may need more compelling content</li>
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.info("No data available for correlation analysis.")
+        
+        with advanced_tab2:
+            st.subheader("Email Campaign Simulation")
+            
+            # Simulation parameters
+            st.markdown("Simulate future email campaign performance based on current metrics")
+            
             col1, col2 = st.columns(2)
             
             with col1:
-                # Company Performance Bar Chart
-                if not filtered_df.empty:
-                    company_metrics = filtered_df.groupby('Company').agg({
-                        'EmailsSent': 'sum',
-                        'EmailsOpened': 'sum',
-                        'EmailsClicked': 'sum'
-                    }).reset_index()
-                    
-                    company_metrics['OpenRate'] = np.where(company_metrics['EmailsSent'] > 0, 
-                                                        company_metrics['EmailsOpened'] / company_metrics['EmailsSent'] * 100, 
-                                                        0)
-                    company_metrics['ClickRate'] = np.where(company_metrics['EmailsSent'] > 0, 
-                                                        company_metrics['EmailsClicked'] / company_metrics['EmailsSent'] * 100, 
-                                                        0)
-                    
-                    fig_company = make_subplots(specs=[[{"secondary_y": True}]])
-                    
-                    if metric_type in ["Open Rate", "All Metrics"]:
-                        fig_company.add_trace(
-                            go.Bar(
-                                x=company_metrics['Company'],
-                                y=company_metrics['OpenRate'],
-                                name="Open Rate (%)",
-                                marker_color='rgba(74, 111, 255, 0.7)',
-                                text=company_metrics['OpenRate'].round(1).astype(str) + '%',
-                                textposition='outside'
-                            ),
-                            secondary_y=False
-                        )
-                    
-                    if metric_type in ["Click Rate", "All Metrics"]:
-                        fig_company.add_trace(
-                            go.Bar(
-                                x=company_metrics['Company'],
-                                y=company_metrics['ClickRate'],
-                                name="Click Rate (%)",
-                                marker_color='rgba(255, 99, 132, 0.7)',
-                                text=company_metrics['ClickRate'].round(1).astype(str) + '%',
-                                textposition='outside'
-                            ),
-                            secondary_y=False
-                        )
-                    
-                    fig_company.update_layout(
-                        title_text="Performance by Company",
-                        barmode='group',
-                        legend=dict(
-                            orientation="h",
-                            yanchor="bottom",
-                            y=1.02,
-                            xanchor="right",
-                            x=1
-                        )
-                    )
-                    
-                    if not company_metrics.empty:
-                        max_value = max(company_metrics['OpenRate'].max() if 'OpenRate' in company_metrics else 0, 
-                                      company_metrics['ClickRate'].max() if 'ClickRate' in company_metrics else 0)
-                        fig_company.update_yaxes(title_text="Rate (%)", range=[0, max_value * 1.2])
-                    
-                    st.plotly_chart(fig_company, use_container_width=True)
-                else:
-                    st.info("No data available for company performance chart with current filters.")
+                sim_emails = st.number_input("Number of emails to send", min_value=100, max_value=10000, value=1000, step=100)
+                sim_improvement = st.slider("Estimated improvement (%)", min_value=-20, max_value=50, value=5, step=5)
             
             with col2:
-                # Role Performance Bar Chart
-                if not filtered_df.empty:
-                    role_metrics = filtered_df.groupby('JobRole').agg({
-                        'EmailsSent': 'sum',
-                        'EmailsOpened': 'sum',
-                        'EmailsClicked': 'sum'
-                    }).reset_index()
-                    
-                    role_metrics['OpenRate'] = np.where(role_metrics['EmailsSent'] > 0, 
-                                                    role_metrics['EmailsOpened'] / role_metrics['EmailsSent'] * 100, 
-                                                    0)
-                    role_metrics['ClickRate'] = np.where(role_metrics['EmailsSent'] > 0, 
-                                                    role_metrics['EmailsClicked'] / role_metrics['EmailsSent'] * 100, 
-                                                    0)
-                    
-                    fig_role = make_subplots(specs=[[{"secondary_y": True}]])
-                    
-                    if metric_type in ["Open Rate", "All Metrics"]:
-                        fig_role.add_trace(
-                            go.Bar(
-                                x=role_metrics['JobRole'],
-                                y=role_metrics['OpenRate'],
-                                name="Open Rate (%)",
-                                marker_color='rgba(74, 111, 255, 0.7)',
-                                text=role_metrics['OpenRate'].round(1).astype(str) + '%',
-                                textposition='outside'
-                            ),
-                            secondary_y=False
-                        )
-                    
-                    if metric_type in ["Click Rate", "All Metrics"]:
-                        fig_role.add_trace(
-                            go.Bar(
-                                x=role_metrics['JobRole'],
-                                y=role_metrics['ClickRate'],
-                                name="Click Rate (%)",
-                                marker_color='rgba(255, 99, 132, 0.7)',
-                                text=role_metrics['ClickRate'].round(1).astype(str) + '%',
-                                textposition='outside'
-                            ),
-                            secondary_y=False
-                        )
-                    
-                    fig_role.update_layout(
-                        title_text="Performance by Job Role",
-                        barmode='group',
-                        legend=dict(
-                            orientation="h",
-                            yanchor="bottom",
-                            y=1.02,
-                            xanchor="right",
-                            x=1
-                        )
-                    )
-                    
-                    if not role_metrics.empty:
-                        max_value = max(role_metrics['OpenRate'].max() if 'OpenRate' in role_metrics else 0, 
-                                      role_metrics['ClickRate'].max() if 'ClickRate' in role_metrics else 0)
-                        fig_role.update_yaxes(title_text="Rate (%)", range=[0, max_value * 1.2])
-                    
-                    st.plotly_chart(fig_role, use_container_width=True)
-                else:
-                    st.info("No data available for role performance chart with current filters.")
-        
-        with tab2:
-            st.subheader("Trend Analysis")
+                sim_period = st.selectbox("Time period", ["Next week", "Next month", "Next quarter"])
+                sim_segment = st.selectbox("Target segment", ["All recipients", "High engagement segment", "Low engagement segment"])
             
-            # Time series charts using the synthetic dates
-            if not filtered_time_df.empty:
-                # Fix: Make sure Date is datetime type
-                filtered_time_df['Date'] = pd.to_datetime(filtered_time_df['Date'])
-                # Group by date and calculate aggregated metrics
-                # Fix: Use resample instead of Grouper for more reliability
-                time_metrics = filtered_time_df.set_index('Date').resample('W').agg({
-                    'EmailsSent': 'sum',
-                    'EmailsOpened': 'sum',
-                    'EmailsClicked': 'sum'
-                }).reset_index()
+            # Run simulation button
+            if st.button("Run Simulation"):
+                # Get current metrics
+                current_open_rate = open_rate / 100  # Convert to decimal
+                current_click_rate = click_rate / 100  # Convert to decimal
                 
-                # Only proceed if we have data
-                if not time_metrics.empty:
-                    time_metrics['OpenRate'] = np.where(time_metrics['EmailsSent'] > 0, 
-                                                    time_metrics['EmailsOpened'] / time_metrics['EmailsSent'] * 100, 
-                                                    0)
-                    time_metrics['ClickRate'] = np.where(time_metrics['EmailsSent'] > 0, 
-                                                    time_metrics['EmailsClicked'] / time_metrics['EmailsSent'] * 100, 
-                                                    0)
-                    time_metrics['CTOR'] = np.where(time_metrics['EmailsOpened'] > 0, 
-                                                time_metrics['EmailsClicked'] / time_metrics['EmailsOpened'] * 100, 
-                                                0)
-                    
-                    # Line chart for metrics over time
-                    fig_time = go.Figure()
-                    
-                    if metric_type in ["Open Rate", "All Metrics"]:
-                        fig_time.add_trace(go.Scatter(
-                            x=time_metrics['Date'],
-                            y=time_metrics['OpenRate'],
-                            mode='lines+markers',
-                            name='Open Rate (%)',
-                            line=dict(color='rgba(74, 111, 255, 0.9)', width=3),
-                            marker=dict(size=8)
-                        ))
-                    
-                    if metric_type in ["Click Rate", "All Metrics"]:
-                        fig_time.add_trace(go.Scatter(
-                            x=time_metrics['Date'],
-                            y=time_metrics['ClickRate'],
-                            mode='lines+markers',
-                            name='Click Rate (%)',
-                            line=dict(color='rgba(255, 99, 132, 0.9)', width=3),
-                            marker=dict(size=8)
-                        ))
-                    
-                    if metric_type in ["Click-to-Open Rate", "All Metrics"]:
-                        fig_time.add_trace(go.Scatter(
-                            x=time_metrics['Date'],
-                            y=time_metrics['CTOR'],
-                            mode='lines+markers',
-                            name='CTOR (%)',
-                            line=dict(color='rgba(50, 168, 82, 0.9)', width=3),
-                            marker=dict(size=8)
-                        ))
-                    
-                    fig_time.update_layout(
-                        title='Email Metrics Trends Over Time (Weekly)',
-                        xaxis_title='Date',
-                        yaxis_title='Rate (%)',
-                        legend=dict(
-                            orientation="h",
-                            yanchor="bottom",
-                            y=1.02,
-                            xanchor="right",
-                            x=1
-                        ),
-                        hovermode='x unified'
-                    )
-                    
-                    st.plotly_chart(fig_time, use_container_width=True)
-                    
-                    # Comparison line chart if a specific company is selected
-                    if selected_company != 'All Companies' and 'Company' in time_series_df.columns:
-                        st.subheader(f"Performance Comparison: {selected_company} vs Others")
-
-                        # Fix: Ensure consistent datetime format
-                        time_series_df['Date'] = pd.to_datetime(time_series_df['Date'])
-                        
-                        # Calculate metrics for the selected company
-                        selected_company_df = time_series_df[time_series_df['Company'] == selected_company].copy()
-                        
-                        if not selected_company_df.empty:
-                            # Fix: Use resample instead of Grouper
-                            company_time = selected_company_df.set_index('Date').resample('W').agg({
-                                'EmailsSent': 'sum',
-                                'EmailsOpened': 'sum',
-                                'EmailsClicked': 'sum'
-                            }).reset_index()
-                        
-                            # Only proceed if we have data
-                            if not company_time.empty:
-                                company_time['OpenRate'] = np.where(company_time['EmailsSent'] > 0, 
-                                                            company_time['EmailsOpened'] / company_time['EmailsSent'] * 100, 
-                                                            0)
-                                company_time['ClickRate'] = np.where(company_time['EmailsSent'] > 0, 
-                                                            company_time['EmailsClicked'] / company_time['EmailsSent'] * 100, 
-                                                            0)
-                                
-                                # Calculate metrics for all other companies
-                                other_companies_df = time_series_df[time_series_df['Company'] != selected_company].copy()
-                                if not other_companies_df.empty:
-                                    # Fix: Use resample instead of Grouper
-                                    other_time = other_companies_df.set_index('Date').resample('W').agg({
-                                        'EmailsSent': 'sum',
-                                        'EmailsOpened': 'sum',
-                                        'EmailsClicked': 'sum'
-                                    }).reset_index()
-                                
-                                    if not other_time.empty:
-                                        other_time['OpenRate'] = np.where(other_time['EmailsSent'] > 0, 
-                                                                other_time['EmailsOpened'] / other_time['EmailsSent'] * 100, 
-                                                                0)
-                                        other_time['ClickRate'] = np.where(other_time['EmailsSent'] > 0, 
-                                                                other_time['EmailsClicked'] / other_time['EmailsSent'] * 100, 
-                                                                0)
-                                        
-                                        # Create comparison chart
-                                        fig_comp = go.Figure()
-                                        
-                                        # Add traces based on metric type
-                                        if metric_type in ["Open Rate", "All Metrics"]:
-                                            fig_comp.add_trace(go.Scatter(
-                                                x=company_time['Date'],
-                                                y=company_time['OpenRate'],
-                                                mode='lines+markers',
-                                                name=f'{selected_company} Open Rate',
-                                                line=dict(color='rgba(74, 111, 255, 0.9)', width=3),
-                                                marker=dict(size=8)
-                                            ))
-                                            
-                                            fig_comp.add_trace(go.Scatter(
-                                                x=other_time['Date'],
-                                                y=other_time['OpenRate'],
-                                                mode='lines+markers',
-                                                name='Others Open Rate',
-                                                line=dict(color='rgba(74, 111, 255, 0.4)', width=2, dash='dash'),
-                                                marker=dict(size=6)
-                                            ))
-                                        
-                                        if metric_type in ["Click Rate", "All Metrics"]:
-                                            fig_comp.add_trace(go.Scatter(
-                                                x=company_time['Date'],
-                                                y=company_time['ClickRate'],
-                                                mode='lines+markers',
-                                                name=f'{selected_company} Click Rate',
-                                                line=dict(color='rgba(255, 99, 132, 0.9)', width=3),
-                                                marker=dict(size=8)
-                                            ))
-                                            
-                                            fig_comp.add_trace(go.Scatter(
-                                                x=other_time['Date'],
-                                                y=other_time['ClickRate'],
-                                                mode='lines+markers',
-                                                name='Others Click Rate',
-                                                line=dict(color='rgba(255, 99, 132, 0.4)', width=2, dash='dash'),
-                                                marker=dict(size=6)
-                                            ))
-                                        
-                                        fig_comp.update_layout(
-                                            title=f'Performance Comparison: {selected_company} vs Others',
-                                            xaxis_title='Date',
-                                            yaxis_title='Rate (%)',
-                                            legend=dict(
-                                                orientation="h",
-                                                yanchor="bottom",
-                                                y=1.02,
-                                                xanchor="right",
-                                                x=1
-                                            ),
-                                            hovermode='x unified'
-                                        )
-                                        
-                                        st.plotly_chart(fig_comp, use_container_width=True)
-                                    else:
-                                        st.info("No comparison data available for other companies.")
-                            else:
-                                st.info(f"No time series data available for {selected_company}.")
-                else:
-                    st.info("No time series data available with current filters.")
-            else:
-                st.info("No time series data available with current filters.")
-        
-        with tab3:
-            st.subheader("Heat Map Analysis")
-            
-            # Create a pivot table for the heat map (Company vs JobRole)
-            if not filtered_df.empty:
-                if metric_type == "Open Rate":
-                    metric_col = 'OpenRate'
-                    title = 'Open Rate (%) by Company and Job Role'
-                elif metric_type == "Click Rate":
-                    metric_col = 'ClickRate'
-                    title = 'Click Rate (%) by Company and Job Role'
-                elif metric_type == "Click-to-Open Rate":
-                    metric_col = 'CTOR'
-                    title = 'Click-to-Open Rate (%) by Company and Job Role'
-                else:
-                    # Default to engagement score for "All Metrics"
-                    metric_col = 'EngagementScore'
-                    title = 'Engagement Score by Company and Job Role'
+                # Apply improvement factor
+                improved_open_rate = current_open_rate * (1 + sim_improvement/100)
+                improved_click_rate = current_click_rate * (1 + sim_improvement/100)
                 
-                # Generate pivot table
-                try:
-                    pivot_df = pd.pivot_table(
-                        filtered_df, 
-                        values=metric_col, 
-                        index='Company', 
-                        columns='JobRole', 
-                        aggfunc='mean',
-                        fill_value=0
-                    )
-                    # Create heatmap
-                    fig_heatmap = px.imshow(
-                        pivot_df,
-                        text_auto='.1f',
-                        aspect="auto",
-                        color_continuous_scale='Blues',
-                        title=title
-                    )
-                    
-                    fig_heatmap.update_layout(
-                        height=500,
-                        xaxis_title='Job Role',
-                        yaxis_title='Company'
-                    )
-                    
-                    st.plotly_chart(fig_heatmap, use_container_width=True)
-
-                except Exception as e:
-                    st.warning(f"Could not generate heat map: {e}")
-                    st.info("Heat map requires multiple companies and job roles in the filtered data.")
-            
-            else:
-                st.info("No data available for heat map with current filters.")
-            
-        with tab4:
-            st.subheader("Detailed Data")
-
-            # Display the filtered data with metrics
-            if not filtered_df.empty:
-                # Select columns to display
-                display_cols = ['Company', 'JobRole', 'PersonName', 'EmailsSent', 'EmailsOpened', 'EmailsClicked', 'OpenRate', 'ClickRate', 'EngagementScore']
-
-                # Format numeric columns
-                display_df = filtered_df[display_cols].copy()
-                display_df['OpenRate'] = display_df['OpenRate'].round(1).astype(str) + '%'
-                display_df['ClickRate'] = display_df['ClickRate'].round(1).astype(str) + '%'
-                display_df['EngagementScore'] = display_df['EngagementScore'].round(2)
-
-                # Rename columns for better readability
-                display_df.columns = ['Company', 'Job Role', 'Name', 'Emails Sent', 'Emails Opened', 'Emails Clicked', 'Open Rate', 'Click Rate', 'Engagement Score']
-
-                # Display the table
-                st.dataframe(display_df, use_container_width=True)
+                # Cap rates at realistic values
+                improved_open_rate = min(improved_open_rate, 0.95)
+                improved_click_rate = min(improved_click_rate, 0.8)
                 
-                # Add CSV download button
-                csv = display_df.to_csv(index=False)
-                b64 = base64.b64encode(csv.encode()).decode()
-                href = f'<a href="data:file/csv;base64,{b64}" download="email_metrics.csv" class="stDownloadButton">Download CSV File</a>'
-                st.markdown(href, unsafe_allow_html=True)
-            else:
-                st.info("No data available with current filters.")
-
-            # Performance insights
-            st.subheader("Performance Insights")
-
-            if not filtered_df.empty:
-                # Calculate top performers
-                top_companies = filtered_df.groupby('Company')['EngagementScore'].mean().sort_values(ascending=False)
-                top_roles = filtered_df.groupby('JobRole')['EngagementScore'].mean().sort_values(ascending=False)
+                # Calculate expected outcomes
+                expected_opens = int(sim_emails * improved_open_rate)
+                expected_clicks = int(sim_emails * improved_click_rate)
                 
-                col1, col2 = st.columns(2)
-
+                # Create time series data for visualization
+                if sim_period == "Next week":
+                    dates = [datetime.now() + timedelta(days=i) for i in range(7)]
+                    daily_emails = [int(sim_emails / 7) for _ in range(7)]
+                elif sim_period == "Next month":
+                    dates = [datetime.now() + timedelta(days=i) for i in range(0, 30, 3)]
+                    daily_emails = [int(sim_emails / 10) for _ in range(10)]
+                else:  # Next quarter
+                    dates = [datetime.now() + timedelta(days=i) for i in range(0, 90, 9)]
+                    daily_emails = [int(sim_emails / 10) for _ in range(10)]
+                
+                # Add some randomness to make it realistic
+                daily_opens = [int(emails * improved_open_rate * np.random.uniform(0.9, 1.1)) for emails in daily_emails]
+                daily_clicks = [int(emails * improved_click_rate * np.random.uniform(0.9, 1.1)) for emails in daily_emails]
+                
+                # Create dataframe for plotting
+                sim_df = pd.DataFrame({
+                    'Date': dates,
+                    'Emails': daily_emails,
+                    'Opens': daily_opens,
+                    'Clicks': daily_clicks
+                })
+                
+                # Cumulative data
+                sim_df['Cum_Emails'] = sim_df['Emails'].cumsum()
+                sim_df['Cum_Opens'] = sim_df['Opens'].cumsum()
+                sim_df['Cum_Clicks'] = sim_df['Clicks'].cumsum()
+                
+                # Create time series plot
+                fig = make_subplots(rows=2, cols=1, 
+                                   subplot_titles=('Daily Metrics', 'Cumulative Performance'),
+                                   vertical_spacing=0.15,
+                                   shared_xaxes=True)
+                
+                # Daily metrics
+                fig.add_trace(
+                    go.Bar(x=sim_df['Date'], y=sim_df['Emails'], name='Emails Sent', marker_color='rgba(156, 165, 196, 0.7)'),
+                    row=1, col=1
+                )
+                fig.add_trace(
+                    go.Bar(x=sim_df['Date'], y=sim_df['Opens'], name='Opens', marker_color='rgba(74, 111, 255, 0.7)'),
+                    row=1, col=1
+                )
+                fig.add_trace(
+                    go.Bar(x=sim_df['Date'], y=sim_df['Clicks'], name='Clicks', marker_color='rgba(255, 99, 132, 0.7)'),
+                    row=1, col=1
+                )
+                
+                # Cumulative metrics
+                fig.add_trace(
+                    go.Scatter(x=sim_df['Date'], y=sim_df['Cum_Emails'], name='Cum. Emails', line=dict(width=3, color='rgb(156, 165, 196)')),
+                    row=2, col=1
+                )
+                fig.add_trace(
+                    go.Scatter(x=sim_df['Date'], y=sim_df['Cum_Opens'], name='Cum. Opens', line=dict(width=3, color='rgb(74, 111, 255)')),
+                    row=2, col=1
+                )
+                fig.add_trace(
+                    go.Scatter(x=sim_df['Date'], y=sim_df['Cum_Clicks'], name='Cum. Clicks', line=dict(width=3, color='rgb(255, 99, 132)')),
+                    row=2, col=1
+                )
+                
+                # Update layout
+                fig.update_layout(
+                    height=600,
+                    title_text=f"Email Campaign Simulation ({sim_period})",
+                    legend=dict(orientation="h", y=1.1),
+                    barmode='group'
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Summary metrics
+                col1, col2, col3 = st.columns(3)
+                
                 with col1:
-                    st.markdown("**Top Engaging Companies:**")
-                    if not top_companies.empty:
-                        top_company_df = top_companies.head(5).reset_index()
-                        top_company_df.columns = ['Company', 'Avg. Engagement Score']
-                        top_company_df['Avg. Engagement Score'] = top_company_df['Avg. Engagement Score'].round(2)
-                        st.dataframe(top_company_df, use_container_width=True)
-                    else:
-                        st.info("No company engagement data available.")
-
+                    st.metric(
+                        label="Projected Opens",
+                        value=f"{expected_opens:,}",
+                        delta=f"{sim_improvement}% from current"
+                    )
+                
                 with col2:
-                    st.markdown("**Top Engaging Job Roles:**")
-                    if not top_roles.empty:
-                        top_role_df = top_roles.head(5).reset_index()
-                        top_role_df.columns = ['Job Role', 'Avg. Engagement Score']
-                        top_role_df['Avg. Engagement Score'] = top_role_df['Avg. Engagement Score'].round(2)
-                        st.dataframe(top_role_df, use_container_width=True)
-                    else:
-                        st.info("No job role engagement data available.")
+                    st.metric(
+                        label="Projected Clicks",
+                        value=f"{expected_clicks:,}",
+                        delta=f"{sim_improvement}% from current"
+                    )
                 
-                # Key insights
-                st.markdown("### Key Insights")
+                with col3:
+                    roi_estimate = expected_clicks * 50  # Assuming $50 value per click
+                    st.metric(
+                        label="Estimated ROI",
+                        value=f"${roi_estimate:,}",
+                        delta=f"Based on {expected_clicks} clicks"
+                    )
                 
-                # Generate basic insights based on the data
-                insights = []
-                
-                # Overall performance insight
-                benchmarks = generate_industry_benchmarks()
-                industry_open_rate = benchmarks['OpenRate']['Overall']
-                industry_click_rate = benchmarks['ClickRate']['Overall']
-
-                if open_rate > industry_open_rate:
-                    insights.append(f"✅ Your open rate ({open_rate:.1f}%) is above the industry average ({industry_open_rate}%).")
-                else:
-                    insights.append(f"⚠️ Your open rate ({open_rate:.1f}%) is below the industry average ({industry_open_rate}%).")
-                    
-                if click_rate > industry_click_rate:
-                    insights.append(f"✅ Your click rate ({click_rate:.1f}%) is above the industry average ({industry_click_rate}%).")
-                else:
-                    insights.append(f"⚠️ Your click rate ({click_rate:.1f}%) is below the industry average ({industry_click_rate}%).")
-                
-                # Best and worst performing segments
-                if not top_companies.empty and not top_companies.head(1).empty:
-                    best_company = top_companies.head(1).index[0]
-                    best_company_score = top_companies.head(1).values[0]
-                    insights.append(f"🏆 {best_company} has the highest engagement score ({best_company_score:.2f}).")
-                
-                if not top_roles.empty and not top_roles.head(1).empty:
-                    best_role = top_roles.head(1).index[0]
-                    best_role_score = top_roles.head(1).values[0]
-                    insights.append(f"👑 {best_role} is the most engaged job role ({best_role_score:.2f}).")
-                
-                # Display insights
-                for insight in insights:
-                    st.markdown(f"- {insight}")
-                
-                # Recommendations based on insights
-                st.markdown("### Recommendations")
-
-                recommendations = [
-                    "Segment your audience more granularly based on engagement patterns.",
-                    "A/B test subject lines to improve open rates.",
-                    f"Focus on personalized content for {best_role if not top_roles.empty and len(top_roles) > 0 else 'top-performing roles'}."
-                ]
-                
-                if open_rate < industry_open_rate:
-                    recommendations.append("Improve subject lines and send times to boost open rates.")
-                
-                if click_rate < industry_click_rate:
-                    recommendations.append("Enhance email content and CTAs to increase click rates.")
-                
-                for recommendation in recommendations:
-                    st.markdown(f"- {recommendation}")
-            
+                # Add simulation insights
+                st.markdown(f"""
+                <div class="engagement-stats">
+                    <h3>Simulation Insights</h3>
+                    <p>Based on your current metrics and an estimated improvement of {sim_improvement}%, here's what you can expect:</p>
+                    <ul>
+                        <li>From {sim_emails:,} emails, you'll likely get {expected_opens:,} opens and {expected_clicks:,} clicks</li>
+                        <li>Your projected open rate will be {improved_open_rate*100:.1f}% (vs current {open_rate:.1f}%)</li>
+                        <li>Your projected click rate will be {improved_click_rate*100:.1f}% (vs current {click_rate:.1f}%)</li>
+                        <li>If each click is worth about $50 in potential revenue, this campaign could generate approximately ${roi_estimate:,}</li>
+                    </ul>
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                st.info("No data available for insights with current filters.")
+                st.info("Adjust the parameters above and click 'Run Simulation' to see projected results.")
     
     except Exception as e:
-        st.error(f"An error occurred while processing the data: {e}")
+        st.error(f"An error occurred while processing the data: {str(e)}")
         st.info("Please check your data format and try again.")
-
 else:
-    # Display instructions when no data is loaded
+    # Display welcome message when no data is loaded
+    st.info("Welcome to the Email Metrics Dashboard! Please upload your email engagement data or load the sample data to get started.")
+    
     st.markdown("""
-    ## Welcome to the Email Metrics Dashboard 📧
+    ### How to use this dashboard:
     
-    This dashboard helps you visualize and analyze your email campaign performance.
+    1. **Upload your data**: Use the uploader in the sidebar to upload a CSV file with your email metrics.
+    2. **Explore metrics**: View summary metrics and detailed analytics about your email campaign performance.
+    3. **Filter data**: Use the filters to narrow down your analysis by company, job role, or metric type.
+    4. **Get insights**: Check the Insights & Recommendations section for actionable tips.
+    5. **Export data**: Download your results as a CSV for further analysis or reporting.
     
-    ### Getting Started:
-    1. Use the sidebar to upload your CSV data or load sample data
-    2. Your CSV should include these columns:
-       - Company
-       - JobRole
-       - PersonName
-       - EmailsSent (yes/no)
-       - EmailsOpened (yes/no)
-       - EmailsClicked (yes/no)
-    3. Once data is loaded, you can filter by company, job role, and metric type
+    ### Required CSV Format:
     
-    ### Key Features:
-    - Performance analysis with interactive charts
-    - Time series trends
-    - Heat maps showing engagement patterns
-    - Detailed data tables with export functionality
-    - Actionable insights and recommendations
-    
-    Need sample data? Click the "Load Sample Data" button in the sidebar to get started.
+    Your CSV should include the following columns:
+    - `Company`: The company name of each recipient
+    - `JobRole`: The job role or title of each recipient
+    - `PersonName`: The name of each recipient
+    - `EmailsSent`: Whether an email was sent (yes/no or 1/0)
+    - `EmailsOpened`: Whether the email was opened (yes/no or 1/0)
+    - `EmailsClicked`: Whether the email was clicked (yes/no or 1/0)
     """)
-    
-    # Sample data format display
-    st.markdown("### Sample Data Format")
-    sample_format = pd.DataFrame({
-        'Company': ['Acme Corp', 'TechGiant'],
-        'JobRole': ['Manager', 'Director'],
-        'PersonName': ['John Smith', 'Jane Doe'],
-        'EmailsSent': ['yes', 'yes'],
-        'EmailsOpened': ['yes', 'no'],
-        'EmailsClicked': ['no', 'no']
-    })
-    st.dataframe(sample_format, use_container_width=True)
+
+# Footer
+st.markdown("<hr>", unsafe_allow_html=True)
+st.markdown("© 2025 Email Metrics Dashboard | Built with Streamlit", unsafe_allow_html=True)
